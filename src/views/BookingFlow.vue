@@ -178,15 +178,21 @@ onMounted(() => {
   if (bId) {
     pending = bookings.find(b => b.id === bId && b.userId === session.value?.userId && b.status === 'pending_payment')
   }
-  if (!pending && existingBooking.value) {
-    pending = existingBooking.value
-  }
+  // ไม่กระโดดไปหน้าชำระของการจองเก่าเอง — ให้ลูกค้าเลือกเอง (ดูแถบแจ้งเตือนในขั้นเลือกวันที่)
   if (pending) {
     booking.value = pending
     step.value = 'payment'
     startCountdown()
   }
 })
+
+function resumePending() {
+  const pending = existingBooking.value
+  if (!pending) return
+  booking.value = pending
+  step.value = 'payment'
+  startCountdown()
+}
 
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
@@ -210,6 +216,16 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
           <!-- Select step -->
           <div v-if="step === 'select'" class="bg-white rounded-2xl border border-line p-6">
             <h2 class="font-display font-semibold text-xl text-ink mb-6">ข้อมูลการจอง</h2>
+            <div
+              v-if="existingBooking"
+              class="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+            >
+              <span>
+                คุณมีการจอง <b>{{ existingBooking.id }}</b> ที่โรงแรมนี้ซึ่งยังรอชำระเงินอยู่
+                ({{ formatDate(existingBooking.checkIn) }} – {{ formatDate(existingBooking.checkOut) }})
+              </span>
+              <BaseButton @click="resumePending" variant="outline" size="sm">ไปชำระการจองนี้</BaseButton>
+            </div>
             <div class="flex flex-col gap-6">
               <div class="p-4 bg-canvas rounded-xl border border-line">
                 <p class="font-medium text-ink">{{ room?.type }}</p>
