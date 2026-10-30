@@ -17,6 +17,8 @@ import {
 } from '@lucide/vue'
 
 const { session } = useSession()
+// ผู้ดูแลระบบดูคำขอคืนเงินของทุกโรงแรมได้อย่างเดียว (UC-14 ตรวจสอบธุรกรรม) ผู้พิจารณาคือผู้จัดการโรงแรม
+const isAdmin = computed(() => session.value?.role === 'admin')
 
 const allRefunds = computed(() => db['adoga_refunds'] || [])
 const allHotels = computed(() => db['adoga_hotels'] || [])
@@ -27,7 +29,7 @@ const allUsers = computed(() => db['adoga_users'] || [])
 const myHotels = computed(() => {
   const userId = session.value?.userId
   if (!userId) return []
-  if (session.value?.role === 'admin') return allHotels.value
+  if (session.value?.role === 'admin') return allHotels.value.filter(h => !h.isSupport)
   return allHotels.value.filter(h => h.managerId === userId)
 })
 
@@ -115,8 +117,9 @@ function openRejectFromModal(id) {
 
 // Actions — ทุกการเปลี่ยนสถานะผ่าน services/transitions.js และแจ้ง error เป็นภาษาไทย
 function doStartReview(id) {
+  if (isAdmin.value) return
   try {
-    startReview(id)
+    startReview(id, session.value?.userId)
     showToast('เริ่มการตรวจสอบคำขอคืนเงินแล้ว', 'info')
   } catch (err) {
     showToast(err.message, 'error', 6000)
@@ -124,9 +127,10 @@ function doStartReview(id) {
 }
 
 function doApprove(id) {
+  if (isAdmin.value) return false
   if (!confirm('ยืนยันอนุมัติคืนเงิน? การจองจะถูกยกเลิกและห้องจะกลับมาว่าง')) return false
   try {
-    approveRefund(id)
+    approveRefund(id, session.value?.userId)
     showToast('อนุมัติการคืนเงินเรียบร้อยแล้ว', 'success')
     return true
   } catch (err) {
@@ -141,6 +145,7 @@ const rejectId = ref('')
 const rejectReason = ref('')
 
 function openReject(id) {
+  if (isAdmin.value) return
   rejectId.value = id
   rejectReason.value = ''
   showRejectModal.value = true
@@ -149,7 +154,7 @@ function openReject(id) {
 function doReject() {
   if (!rejectReason.value.trim()) return
   try {
-    rejectRefund(rejectId.value, rejectReason.value.trim())
+    rejectRefund(rejectId.value, rejectReason.value.trim(), session.value?.userId)
     showRejectModal.value = false
     showToast('ปฏิเสธคำขอคืนเงินแล้ว', 'info')
   } catch (err) {
@@ -161,7 +166,7 @@ function doReject() {
 <template>
   <div class="min-h-screen bg-canvas flex flex-col lg:flex-row">
     <!-- Sidebar -->
-    <Sidebar type="manager" />
+    <Sidebar :type="isAdmin ? 'admin' : 'manager'" />
 
     <!-- Main Content -->
     <div class="flex-1 min-w-0 lg:ml-64 overflow-auto">
@@ -171,15 +176,17 @@ function doReject() {
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
           <div>
             <div class="flex items-center gap-2 mb-1">
-              <RouterLink to="/manager" class="text-xs text-ink-muted hover:text-indigo-600 transition-colors flex items-center gap-1 font-medium">
-                <ArrowLeft class="w-3.5 h-3.5" /> แดชบอร์ดผู้จัดการ
+              <RouterLink :to="isAdmin ? '/admin' : '/manager'" class="text-xs text-ink-muted hover:text-indigo-600 transition-colors flex items-center gap-1 font-medium">
+                <ArrowLeft class="w-3.5 h-3.5" /> {{ isAdmin ? 'แดชบอร์ดผู้ดูแลระบบ' : 'แดชบอร์ดผู้จัดการ' }}
               </RouterLink>
             </div>
             <h1 class="font-display font-semibold text-2xl text-ink">
               ใบขอคืนเงิน (Refund Requests)
             </h1>
             <p class="text-xs md:text-sm text-ink-muted mt-1">
-              ตรวจสอบ พิจารณาอนุมัติ หรือปฏิเสธคำขอคืนเงินจากลูกค้าสำหรับโรงแรมของคุณ
+              {{ isAdmin
+                ? 'ดูคำขอคืนเงินของทุกโรงแรมในระบบ (อ่านอย่างเดียว — ผู้จัดการโรงแรมเป็นผู้พิจารณาอนุมัติหรือปฏิเสธ)'
+                : 'ตรวจสอบ พิจารณาอนุมัติ หรือปฏิเสธคำขอคืนเงินจากลูกค้าสำหรับโรงแรมของคุณ' }}
             </p>
           </div>
 
@@ -325,7 +332,7 @@ function doReject() {
                       </BaseButton>
 
                       <BaseButton
-                        v-if="r.status === 'submitted'"
+                        v-if="!isAdmin && r.status === 'submitted'"
                         @click="doStartReview(r.id)"
                         variant="outline"
                         size="sm"
@@ -335,7 +342,7 @@ function doReject() {
                       </BaseButton>
 
                       <BaseButton
-                        v-if="['submitted', 'reviewing'].includes(r.status)"
+                        v-if="!isAdmin && ['submitted', 'reviewing'].includes(r.status)"
                         @click="doApprove(r.id)"
                         variant="secondary"
                         size="sm"
@@ -345,7 +352,7 @@ function doReject() {
                       </BaseButton>
 
                       <BaseButton
-                        v-if="['submitted', 'reviewing'].includes(r.status)"
+                        v-if="!isAdmin && ['submitted', 'reviewing'].includes(r.status)"
                         @click="openReject(r.id)"
                         variant="danger"
                         size="sm"
@@ -412,7 +419,7 @@ function doReject() {
 
         <div class="flex flex-wrap gap-2 justify-end pt-3 border-t border-line">
           <BaseButton @click="showDetailModal = false" variant="ghost" size="md">ปิด</BaseButton>
-          <template v-if="['submitted', 'reviewing'].includes(selectedRefund.status)">
+          <template v-if="!isAdmin && ['submitted', 'reviewing'].includes(selectedRefund.status)">
             <BaseButton @click="openRejectFromModal(selectedRefund.id)" variant="danger" size="md">
               ปฏิเสธ
             </BaseButton>

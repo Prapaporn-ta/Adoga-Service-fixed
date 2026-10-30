@@ -38,6 +38,7 @@ const links = computed(() => {
     return [
       { to: '/admin', label: 'แดชบอร์ดภาพรวม', icon: LayoutDashboard },
       { to: '/admin/approval', label: 'อนุมัติโรงแรม', icon: CheckSquare },
+      { to: '/admin/refunds', label: 'ตรวจสอบคำขอคืนเงิน', icon: FileText },
       { to: '/admin/messages', label: 'ข้อความระบบ & แชท', icon: MessageCircle },
       { to: '/admin/permissions', label: 'กำหนดสิทธิ์', icon: ShieldCheck },
       { to: '/admin/settings', label: 'ตั้งค่าระบบ', icon: Settings },

@@ -319,9 +319,17 @@ export function requestRefund({ bookingId, userId, reason }) {
   return refund
 }
 
-export function startReview(refundId) {
+// ผู้พิจารณาคำขอคืนเงิน = ผู้จัดการของโรงแรมนั้น (ผู้ดูแลระบบดูได้อย่างเดียว)
+function assertRefundDecider(refund, actorId) {
+  if (!actorId) return
+  const hotel = list('adoga_hotels').find(h => h.id === refund.hotelId)
+  if (!hotel || hotel.managerId !== actorId) fail('เฉพาะผู้จัดการของโรงแรมนี้เท่านั้นที่พิจารณาคำขอคืนเงินได้')
+}
+
+export function startReview(refundId, actorId = null) {
   const refunds = [...list('adoga_refunds')]
   const idx = findIndexOrFail(refunds, refundId, 'คำขอคืนเงิน')
+  assertRefundDecider(refunds[idx], actorId)
   refunds[idx] = transition('refund', refunds[idx], 'reviewing')
   db['adoga_refunds'] = refunds
 }
@@ -332,9 +340,10 @@ function toDecision(refund, to) {
   return transition('refund', r, to)
 }
 
-export function approveRefund(refundId) {
+export function approveRefund(refundId, actorId = null) {
   const refunds = [...list('adoga_refunds')]
   const rIdx = findIndexOrFail(refunds, refundId, 'คำขอคืนเงิน')
+  assertRefundDecider(refunds[rIdx], actorId)
   const bookings = [...list('adoga_bookings')]
   const bIdx = findIndexOrFail(bookings, refunds[rIdx].bookingId, 'การจองของคำขอนี้')
   const b = bookings[bIdx]
@@ -353,10 +362,11 @@ export function approveRefund(refundId) {
   db['adoga_hotels'] = hotels
 }
 
-export function rejectRefund(refundId, rejectReason) {
+export function rejectRefund(refundId, rejectReason, actorId = null) {
   if (!rejectReason || !String(rejectReason).trim()) fail('กรุณาระบุเหตุผลการปฏิเสธ')
   const refunds = [...list('adoga_refunds')]
   const idx = findIndexOrFail(refunds, refundId, 'คำขอคืนเงิน')
+  assertRefundDecider(refunds[idx], actorId)
   refunds[idx] = { ...toDecision(refunds[idx], 'rejected'), rejectReason: String(rejectReason).trim(), decidedAt: new Date().toISOString() }
   db['adoga_refunds'] = refunds
 }

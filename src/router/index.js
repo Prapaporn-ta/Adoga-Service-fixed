@@ -40,6 +40,7 @@ const routes = [
   { path: '/admin', component: AdminDashboard, meta: { access: 'admin' } },
   { path: '/admin/approval', component: AdminApproval, meta: { access: 'admin' } },
   { path: '/admin/messages', component: ManagerMessage, meta: { access: 'admin' } },
+  { path: '/admin/refunds', component: ManagerRefunds, meta: { access: 'admin' } },
   { path: '/admin/permissions', component: AdminPermissions, meta: { access: 'admin' } },
   { path: '/admin/settings', component: AdminSettings, meta: { access: 'admin' } },
 ]
