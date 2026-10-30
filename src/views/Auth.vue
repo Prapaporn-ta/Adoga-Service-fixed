@@ -39,7 +39,8 @@ const googleAccounts = computed(() => {
         { email: 'admin@gmail.com', firstName: 'Admin', lastName: 'Adoga', role: 'admin' },
       ]
 
-  return users.map((u, idx) => {
+  // บัญชีผู้ดูแลระบบไม่แสดงในตัวเลือก Google (ต้องเข้าด้วยรหัสผ่านเท่านั้น)
+  return users.filter(u => u.role !== 'admin').map((u, idx) => {
     const hotel = (db['adoga_hotels'] || []).find(h => h.managerId === u.id)
     const fullName = `${u.firstName || ''} ${u.lastName || ''}`.trim()
     let desc = 'ผู้ใช้งานทั่วไป (User)'

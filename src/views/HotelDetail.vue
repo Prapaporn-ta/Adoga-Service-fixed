@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { db } from '../stores/db.js'
 import { useSession } from '../stores/session.js'
 import { formatPrice, formatDate } from '../utils/date.js'
+import { getAvailableUnits, todayKey } from '../services/transitions.js'
 import Navbar from '../components/common/Navbar.vue'
 import Footer from '../components/common/Footer.vue'
 import StatusBadge from '../components/common/StatusBadge.vue'
@@ -127,7 +128,15 @@ function chatHotel() {
   router.push(`/messages?hotelId=${hotel.value?.id}`)
 }
 
-const availableCount = (room) => room.units?.filter(u => u.status === 'available').length || 0
+// ห้องว่างคืนนี้ (ตรวจตามวันที่จริง) และห้องที่เปิดให้จองได้ (ไม่รวมห้องปิดปรับปรุง)
+function tomorrowKey() {
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const availableCount = (room) => getAvailableUnits(hotel.value, room.id, todayKey(), tomorrowKey(), db['adoga_bookings'] || []).length
+const bookableUnits = (room) => room.units?.filter(u => u.status !== 'maintenance').length || 0
+const canBook = (room) => hotel.value?.status === 'approved' && !hotel.value?.isSupport && bookableUnits(room) > 0
 </script>
 
 <template>
@@ -308,8 +317,8 @@ const availableCount = (room) => room.units?.filter(u => u.status === 'available
                       <span
                         v-if="availableCount(room) > 0"
                         class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full border border-emerald-200 flex-shrink-0"
-                      >เหลือ {{ availableCount(room) }} ห้อง</span>
-                      <span v-else class="text-xs font-semibold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200 flex-shrink-0">เต็ม</span>
+                      >ว่างคืนนี้ {{ availableCount(room) }} ห้อง</span>
+                      <span v-else class="text-xs font-semibold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-full border border-rose-200 flex-shrink-0">คืนนี้เต็ม (เลือกวันอื่นได้)</span>
                     </div>
                     <p class="text-sm text-ink-muted flex items-center gap-1.5 mb-3">
                       <Users class="w-4 h-4 text-slate-400" />
@@ -334,15 +343,15 @@ const availableCount = (room) => room.units?.filter(u => u.status === 'available
                     </div>
                     <button
                       @click="bookRoom(room)"
-                      :disabled="availableCount(room) === 0 || hotel.status !== 'approved'"
+                      :disabled="!canBook(room)"
                       :class="[
                         'h-11 px-6 rounded-full text-sm font-semibold transition-all cursor-pointer shadow-xs',
-                        availableCount(room) > 0 && hotel.status === 'approved'
+                        canBook(room)
                           ? 'bg-coral-600 text-white hover:bg-coral-700 active:scale-95'
                           : 'bg-slate-200 text-slate-500 cursor-not-allowed'
                       ]"
                     >
-                      {{ hotel.status === 'suspended' ? 'ปิดชั่วคราว' : availableCount(room) === 0 ? 'เต็ม' : 'จองห้องพัก' }}
+                      {{ hotel.status === 'suspended' ? 'ปิดชั่วคราว' : hotel.status !== 'approved' ? 'ยังไม่เปิดรับจอง' : bookableUnits(room) === 0 ? 'ปิดปรับปรุง' : 'เลือกวันที่และจอง' }}
                     </button>
                   </div>
                 </div>

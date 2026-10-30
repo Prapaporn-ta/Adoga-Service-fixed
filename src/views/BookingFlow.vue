@@ -4,7 +4,7 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { db } from '../stores/db.js'
 import { useSession } from '../stores/session.js'
-import { createBooking, startPayment, finishPayment, retryPayment, cancelBooking } from '../services/transitions.js'
+import { createBooking, startPayment, finishPayment, retryPayment, cancelBooking, getAvailableUnits, todayKey, nightsBetween } from '../services/transitions.js'
 import { formatPrice, formatDate, countdown } from '../utils/date.js'
 import Navbar from '../components/common/Navbar.vue'
 import Footer from '../components/common/Footer.vue'
@@ -79,9 +79,24 @@ const bookingError = ref('')
 
 const nights = computed(() => {
   if (!checkIn.value || !checkOut.value) return 0
-  const diff = new Date(checkOut.value) - new Date(checkIn.value)
-  return Math.max(0, Math.floor(diff / 86400000))
+  return Math.max(0, nightsBetween(checkIn.value, checkOut.value))
 })
+
+// วันที่เลือกได้: เช็คอินตั้งแต่วันนี้, เช็คเอาท์หลังเช็คอินอย่างน้อย 1 คืน
+const minCheckIn = computed(() => todayKey())
+const minCheckOut = computed(() => {
+  const base = checkIn.value || todayKey()
+  const d = new Date(base + 'T00:00:00')
+  d.setDate(d.getDate() + 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+})
+
+// ห้องว่างตามช่วงวันที่ที่เลือก (ไม่นับห้องปิดปรับปรุง และห้องที่มีการจองทับช่วงวัน)
+const freeUnits = computed(() => {
+  if (!hotel.value || !room.value || nights.value < 1) return []
+  return getAvailableUnits(hotel.value, room.value.id, checkIn.value, checkOut.value, db['adoga_bookings'] || [])
+})
+const hotelBookable = computed(() => hotel.value?.status === 'approved' && !hotel.value?.isSupport)
 
 const totalPrice = computed(() => {
   if (!room.value || !nights.value) return 0
@@ -89,22 +104,24 @@ const totalPrice = computed(() => {
 })
 
 function doBook() {
-  if (!checkIn.value || !checkOut.value || nights.value < 1) { bookingError.value = 'กรุณาเลือกวันที่ที่ถูกต้อง'; return }
-  const avail = room.value?.units?.find(u => u.status === 'available')
-  if (!avail) { bookingError.value = 'ห้องเต็มแล้ว'; return }
   bookingError.value = ''
-  const b = createBooking({
-    userId: session.value.userId,
-    hotelId: hotel.value.id,
-    roomId: room.value.id,
-    roomNo: avail.no,
-    guests: guests.value,
-    checkIn: checkIn.value,
-    checkOut: checkOut.value,
-    nights: nights.value,
-    totalPrice: totalPrice.value,
-    paymentMethod: paymentMethod.value,
-  })
+  if (!hotelBookable.value) { bookingError.value = 'โรงแรมนี้ยังไม่เปิดรับจอง'; return }
+  if (!checkIn.value || !checkOut.value || nights.value < 1) { bookingError.value = 'กรุณาเลือกวันที่ที่ถูกต้อง'; return }
+  let b
+  try {
+    b = createBooking({
+      userId: session.value.userId,
+      hotelId: hotel.value.id,
+      roomId: room.value.id,
+      guests: guests.value,
+      checkIn: checkIn.value,
+      checkOut: checkOut.value,
+      paymentMethod: paymentMethod.value,
+    })
+  } catch (err) {
+    bookingError.value = err.message
+    return
+  }
   booking.value = b
   step.value = 'payment'
   startCountdown()
@@ -120,15 +137,28 @@ async function doPay() {
     refreshBooking()
     if (!simulateFail.value) step.value = 'done'
   } catch (err) {
-    console.error('Payment error:', err)
+    showToast(err.message, 'error', 6000)
+    refreshBooking()
   } finally {
     payLoading.value = false
     showPayModal.value = false
   }
 }
 
-function doRetry() { retryPayment(booking.value.id); refreshBooking() }
-function doCancel() { cancelBooking(booking.value.id); router.push('/') }
+function doRetry() {
+  try { retryPayment(booking.value.id) } catch (err) { showToast(err.message, 'error', 6000) }
+  refreshBooking()
+}
+function doCancel() {
+  if (!confirm('ยืนยันการยกเลิกการจองนี้?')) return
+  try {
+    cancelBooking(booking.value.id, 'user', session.value?.userId)
+    showToast('ยกเลิกการจองแล้ว', 'info')
+    router.push('/profile')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
+}
 
 const bookingSteps = computed(() => {
   const b = booking.value
@@ -188,11 +218,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
               <div class="grid grid-cols-2 gap-4">
                 <div class="flex flex-col gap-2">
                   <label class="text-sm font-medium text-ink">วันเช็คอิน *</label>
-                  <input type="date" v-model="checkIn" class="h-12 px-4 rounded-xl border border-line text-ink focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100" />
+                  <input type="date" v-model="checkIn" :min="minCheckIn" class="h-12 px-4 rounded-xl border border-line text-ink focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100" />
                 </div>
                 <div class="flex flex-col gap-2">
                   <label class="text-sm font-medium text-ink">วันเช็คเอาท์ *</label>
-                  <input type="date" v-model="checkOut" class="h-12 px-4 rounded-xl border border-line text-ink focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100" />
+                  <input type="date" v-model="checkOut" :min="minCheckOut" class="h-12 px-4 rounded-xl border border-line text-ink focus:outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-100" />
                 </div>
               </div>
               <div class="flex flex-col gap-2">
@@ -213,8 +243,12 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
                   >{{ m.label }}</button>
                 </div>
               </div>
+              <p v-if="!hotelBookable" class="text-sm text-rose-700">โรงแรมนี้ยังไม่เปิดรับจองในขณะนี้</p>
+              <p v-else-if="nights > 0" :class="['text-sm', freeUnits.length ? 'text-emerald-700' : 'text-rose-700']">
+                {{ freeUnits.length ? `ว่าง ${freeUnits.length} ห้องในช่วงวันที่เลือก` : 'ห้องประเภทนี้เต็มในช่วงวันที่เลือก' }}
+              </p>
               <p v-if="bookingError" class="text-sm text-rose-700">{{ bookingError }}</p>
-              <BaseButton @click="doBook" variant="primary" size="lg" :disabled="!nights" class="w-full">
+              <BaseButton @click="doBook" variant="primary" size="lg" :disabled="!nights || !hotelBookable || !freeUnits.length" class="w-full">
                 จองห้องพัก ({{ nights }} คืน)
               </BaseButton>
             </div>

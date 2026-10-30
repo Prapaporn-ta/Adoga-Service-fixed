@@ -2,7 +2,8 @@
 // src/views/AdminApproval.vue
 import { computed, ref, watch } from 'vue'
 import { db } from '../stores/db.js'
-import { approveHotel, rejectHotel } from '../services/transitions.js'
+import { useSession } from '../stores/session.js'
+import { approveHotel, rejectHotel, isSupportHotel } from '../services/transitions.js'
 import { formatPrice, formatDateTime } from '../utils/date.js'
 import { showToast } from '../utils/toast.js'
 import StatusBadge from '../components/common/StatusBadge.vue'
@@ -16,6 +17,7 @@ import {
 import Sidebar from '../components/common/Sidebar.vue'
 
 // --- Pending Hotels (Approval Section) ---
+const { session } = useSession()
 const pendingHotels = computed(() => (db['adoga_hotels'] || []).filter(h => h.status === 'pending'))
 
 const pendingSearchQuery = ref('')
@@ -48,7 +50,7 @@ const paginatedPendingHotels = computed(() => {
 })
 
 // --- All Hotels Section ---
-const allHotels = computed(() => db['adoga_hotels'] || [])
+const allHotels = computed(() => (db['adoga_hotels'] || []).filter(h => !isSupportHotel(h)))
 
 const searchQuery = ref('')
 const currentPage = ref(1)
@@ -134,8 +136,12 @@ function openRejectFromModal(id) {
 }
 
 function doApprove(id) {
-  approveHotel(id)
-  showToast('อนุมัติโรงแรมเรียบร้อยแล้ว', 'success')
+  try {
+    approveHotel(id, session.value?.userId || 'A001')
+    showToast('อนุมัติโรงแรมเรียบร้อยแล้ว', 'success')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function openReject(id) {
@@ -145,9 +151,13 @@ function openReject(id) {
 }
 
 function doReject() {
-  rejectHotel(rejectHotelId.value, rejectReason.value)
-  showToast('ปฏิเสธคำขอเปิดโรงแรมแล้ว', 'info')
-  showRejectModal.value = false
+  try {
+    rejectHotel(rejectHotelId.value, rejectReason.value, session.value?.userId || 'A001')
+    showToast('ปฏิเสธคำขอเปิดโรงแรมแล้ว', 'info')
+    showRejectModal.value = false
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function getManager(managerId) {

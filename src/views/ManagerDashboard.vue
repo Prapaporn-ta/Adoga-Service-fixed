@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { db } from '../stores/db.js'
 import { useSession } from '../stores/session.js'
 import {
-  suspendHotel, activateHotel,
+  suspendHotel, activateHotel, closeHotel,
   setUnitMaintenance, setUnitAvailable,
   createHotel, updateHotel
 } from '../services/transitions.js'
@@ -230,12 +230,10 @@ function removeRoomType(index) {
   }
 }
 
-function toggleUnitStatus(room, unit) {
-  if (unit.status === 'booked') {
-    showToast('ห้องพักนี้มีผู้จองอยู่ ไม่สามารถเปลี่ยนสถานะได้', 'info')
-    return
-  }
-  unit.status = unit.status === 'available' ? 'maintenance' : 'available'
+// การเปิด/ปิดปรับปรุงห้องทำที่ตาราง "ห้องพัก" (ผ่าน State Diagram ห้องพัก) ไม่ใช่ในฟอร์มแก้ไขโรงแรม
+// เพราะฟอร์มนี้ส่งข้อมูลให้ผู้ดูแลระบบอนุมัติใหม่
+function toggleUnitStatus() {
+  showToast('เปลี่ยนสถานะห้อง (ปิดปรับปรุง/พร้อมใช้งาน) ได้ที่ตารางห้องพักในหน้าแดชบอร์ด โดยไม่ต้องส่งอนุมัติใหม่', 'info', 6000)
 }
 
 function addQuickUnit(room) {
@@ -257,7 +255,7 @@ function removeUnit(room, unitIndex) {
   }
   const u = room.units[unitIndex]
   if (u.status === 'booked') {
-    showToast('ห้องพักนี้มีผู้จองอยู่ ไม่สามารถลบได้', 'error')
+    showToast('ห้องพักนี้มีการจองค้างอยู่ ไม่สามารถลบได้', 'error')
     return
   }
   room.units.splice(unitIndex, 1)
@@ -293,6 +291,10 @@ function openAddHotel() {
 }
 
 function openEditHotel(hotel) {
+  if (!['approved', 'rejected', 'pending'].includes(hotel.status)) {
+    showToast('แก้ไขได้เฉพาะโรงแรมที่เปิดใช้งาน รออนุมัติ หรือถูกปฏิเสธ', 'error')
+    return
+  }
   if (hotel.status === 'approved') {
     if (!confirm('คำเตือน: การแก้ไขข้อมูลจะทำให้โรงแรมกลับไปสู่สถานะ "รออนุมัติ" (pending) และหยุดแสดงในหน้าค้นหาชั่วคราว ยืนยันการแก้ไขหรือไม่?')) {
       return
@@ -343,7 +345,7 @@ function saveHotelForm() {
   }
 
   // 1 Manager = 1 Hotel — สร้างโรงแรมใหม่ได้เฉพาะเมื่อยังไม่มีโรงแรมในความดูแล
-  if (!editingHotelId.value && myHotels.value.length > 0) {
+  if (!editingHotelId.value && myHotels.value.some(h => h.status !== 'closed')) {
     showToast('ผู้จัดการ 1 ท่านดูแลโรงแรมได้เพียง 1 แห่ง (หากมีหลายสาขา ให้เพิ่มเป็นสาขาภายในโรงแรมเดิม)', 'error')
     return
   }
@@ -376,24 +378,48 @@ function saveHotelForm() {
     ]
   }
 
-  if (editingHotelId.value) {
-    updateHotel(editingHotelId.value, payload)
-    showToast('ส่งการแก้ไขข้อมูลโรงแรมและห้องพักแล้ว (สถานะ: รออนุมัติ)', 'success')
-  } else {
-    createHotel(payload)
-    showToast('เพิ่มโรงแรมและห้องพักเรียบร้อยแล้ว (สถานะ: รออนุมัติ)', 'success')
+  try {
+    if (editingHotelId.value) {
+      updateHotel(editingHotelId.value, payload)
+      showToast('ส่งการแก้ไขข้อมูลโรงแรมและห้องพักแล้ว (สถานะ: รออนุมัติ)', 'success')
+    } else {
+      createHotel(payload)
+      showToast('เพิ่มโรงแรมและห้องพักเรียบร้อยแล้ว (สถานะ: รออนุมัติ)', 'success')
+    }
+    showHotelModal.value = false
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
   }
-  showHotelModal.value = false
+}
+
+function runAction(fn, okMsg, type = 'success') {
+  try {
+    fn()
+    showToast(okMsg, type)
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function doSuspend(hotelId) {
-  suspendHotel(hotelId)
-  showToast('ปิดรับจองชั่วคราวแล้ว', 'info')
+  runAction(() => suspendHotel(hotelId), 'ปิดรับจองชั่วคราวแล้ว', 'info')
 }
 
 function doActivate(hotelId) {
-  activateHotel(hotelId)
-  showToast('เปิดรับจองโรงแรมแล้ว', 'success')
+  runAction(() => activateHotel(hotelId), 'เปิดรับจองโรงแรมแล้ว')
+}
+
+function doClose(hotelId) {
+  if (!confirm('ยืนยันปิดกิจการโรงแรมนี้ถาวร? เมื่อปิดแล้วจะไม่สามารถเปิดใหม่หรือแก้ไขข้อมูลได้')) return
+  runAction(() => closeHotel(hotelId), 'ปิดกิจการโรงแรมเรียบร้อยแล้ว', 'info')
+}
+
+function doUnitMaintenance(hotelId, roomId, unitNo) {
+  runAction(() => setUnitMaintenance(hotelId, roomId, unitNo), `ปิดปรับปรุงห้อง ${unitNo} แล้ว`, 'info')
+}
+
+function doUnitAvailable(hotelId, roomId, unitNo) {
+  runAction(() => setUnitAvailable(hotelId, roomId, unitNo), `ห้อง ${unitNo} พร้อมใช้งานแล้ว`)
 }
 
 const stats = computed(() => [
@@ -424,7 +450,7 @@ import HelpFloatingButton from '../components/common/HelpFloatingButton.vue'
       <div class="mx-auto max-w-[1200px] px-4 md:px-8 py-8">
         <div class="flex items-center justify-between mb-8">
           <h1 class="font-display font-semibold text-2xl text-ink">ภาพรวม & แดชบอร์ด</h1>
-          <BaseButton v-if="!myHotels.length" @click="openAddHotel" variant="secondary" size="md">
+          <BaseButton v-if="!myHotels.some(h => h.status !== 'closed')" @click="openAddHotel" variant="secondary" size="md">
             <Plus class="w-4 h-4 mr-1" /> เพิ่มโรงแรม
           </BaseButton>
         </div>
@@ -529,6 +555,12 @@ import HelpFloatingButton from '../components/common/HelpFloatingButton.vue'
                       variant="secondary"
                       size="sm"
                     >เปิดใช้งาน</BaseButton>
+                    <BaseButton
+                      v-if="hotel.status === 'approved'"
+                      @click="doClose(hotel.id)"
+                      variant="danger"
+                      size="sm"
+                    >ปิดกิจการ</BaseButton>
                   </div>
                 </template>
               </StatusBanner>
@@ -601,12 +633,12 @@ import HelpFloatingButton from '../components/common/HelpFloatingButton.vue'
                           <div class="flex gap-2">
                             <BaseButton
                               v-if="item.status === 'available'"
-                              @click="setUnitMaintenance(hotel.id, item.roomId, item.unitNo)"
+                              @click="doUnitMaintenance(hotel.id, item.roomId, item.unitNo)"
                               variant="outline" size="sm"
                             >ปิดปรับปรุง</BaseButton>
                             <BaseButton
                               v-if="item.status === 'maintenance'"
-                              @click="setUnitAvailable(hotel.id, item.roomId, item.unitNo)"
+                              @click="doUnitAvailable(hotel.id, item.roomId, item.unitNo)"
                               variant="secondary" size="sm"
                             >เปิดพร้อมใช้งาน</BaseButton>
                             <span v-if="item.status === 'booked'" class="text-xs text-indigo-600 font-medium py-1">
@@ -960,11 +992,11 @@ import HelpFloatingButton from '../components/common/HelpFloatingButton.vue'
                               ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                               : 'bg-amber-50 text-amber-700 border-amber-200'
                           ]"
-                          :title="u.status === 'available' ? 'คลิกเพื่อสลับเป็นปิดปรับปรุง' : u.status === 'maintenance' ? 'คลิกเพื่อสลับเป็นพร้อมใช้งาน' : 'ติดจอง'"
+                          :title="u.status === 'booked' ? 'มีการจองค้างอยู่' : 'เปลี่ยนสถานะห้องได้ที่ตารางห้องพักในแดชบอร์ด'"
                         >
                           <span
-                            @click="toggleUnitStatus(room, u)"
-                            class="cursor-pointer hover:underline"
+                            @click="toggleUnitStatus()"
+                            class="cursor-help"
                           >
                             #{{ u.no }}
                           </span>

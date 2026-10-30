@@ -3,7 +3,7 @@
 import { ref, computed, watch } from 'vue'
 import { db } from '../stores/db.js'
 import { toggleUserAccess, register } from '../services/authService.js'
-import { createHotel } from '../services/transitions.js'
+import { validateEmail } from '../utils/validators.js'
 import { showToast } from '../utils/toast.js'
 import { formatDate } from '../utils/date.js'
 import Sidebar from '../components/common/Sidebar.vue'
@@ -173,28 +173,23 @@ async function handleUpdateManager() {
   await new Promise(r => setTimeout(r, 300))
 
   const targetUserId = editingAccount.value.id
-
-  // 1. Update user record in db['adoga_users']
-  const userObj = db['adoga_users']?.find(u => u.id === targetUserId)
-  if (userObj) {
-    userObj.email = editGmail.value.trim()
-    userObj.nickname = editNickname.value.trim()
-    userObj.firstName = editNickname.value.trim()
+  const email = editGmail.value.trim().toLowerCase()
+  const emailCheck = validateEmail(email)
+  if (!emailCheck.valid) {
+    editModalError.value = emailCheck.message
+    editModalLoading.value = false
+    return
+  }
+  if ((db['adoga_users'] || []).some(u => u.id !== targetUserId && u.email === email)) {
+    editModalError.value = 'อีเมลนี้ถูกใช้งานแล้ว'
+    editModalLoading.value = false
+    return
   }
 
-  // 2. Update hotel record in db['adoga_hotels'] if hotel name is provided
-  const hotelObj = db['adoga_hotels']?.find(h => h.managerId === targetUserId)
-  if (hotelObj && editHotelName.value.trim()) {
-    hotelObj.name = editHotelName.value.trim()
-  } else if (!hotelObj && editHotelName.value.trim()) {
-    createHotel({
-      managerId: targetUserId,
-      name: editHotelName.value.trim(),
-      location: 'ชลบุรี',
-      description: 'โรงแรมที่พักพาร์ทเนอร์ Adoga Service',
-      pricePerNight: 1800
-    })
-  }
+  // Update user record (ข้อมูลโรงแรมไม่แก้จากหน้านี้ เพื่อให้ทุกการแก้ไขผ่านการอนุมัติตาม State Diagram โรงแรม)
+  db['adoga_users'] = (db['adoga_users'] || []).map(u =>
+    u.id === targetUserId ? { ...u, email, nickname: editNickname.value.trim() } : u
+  )
 
   editModalLoading.value = false
   showEditModal.value = false
@@ -504,7 +499,7 @@ async function handleUpdateManager() {
     >
       <form @submit.prevent="handleUpdateManager" class="flex flex-col gap-4 py-2">
         <p class="text-xs text-slate-500">
-          แก้ไขข้อมูล Gmail, ชื่อโรงแรม และชื่อเล่นของผู้จัดการโรงแรมในระบบ
+          แก้ไขข้อมูล Gmail และชื่อเล่นของผู้จัดการโรงแรมในระบบ
         </p>
 
         <div v-if="editModalError" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium">
@@ -520,12 +515,16 @@ async function handleUpdateManager() {
           required
         />
 
-        <!-- ชื่อโรงแรม -->
-        <BaseInput
-          label="ชื่อโรงแรม (เว้นว่างไว้ได้หากรอผู้จัดการสร้างเอง)"
-          v-model="editHotelName"
-          placeholder="เช่น Chonburi Sea View Resort"
-        />
+        <!-- ชื่อโรงแรม (อ่านเท่านั้น: ข้อมูลโรงแรมแก้ไขโดยผู้จัดการและต้องผ่านการอนุมัติ) -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-700 mb-1">
+            โรงแรมที่ดูแล <span class="text-slate-400 font-normal">(อ่านเท่านั้น — ผู้จัดการเป็นผู้สร้าง/แก้ไขและส่งให้แอดมินอนุมัติ)</span>
+          </label>
+          <div class="flex items-center gap-2 px-3.5 h-10 rounded-xl bg-slate-100 border border-slate-200 text-slate-500 text-sm font-medium cursor-not-allowed select-none">
+            <Hotel class="w-4 h-4 text-slate-400 flex-shrink-0" />
+            <span>{{ editHotelName || 'ยังไม่มีโรงแรม (รอผู้จัดการสร้าง)' }}</span>
+          </div>
+        </div>
 
         <!-- ชื่อเล่น -->
         <BaseInput

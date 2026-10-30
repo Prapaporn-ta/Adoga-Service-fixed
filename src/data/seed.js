@@ -4,7 +4,7 @@ import { HOTEL_IMAGES } from '../constants/images.js'
 import { addHours, addDays } from '../utils/date.js'
 import { db } from '../stores/db.js'
 
-const VERSION = 10
+const VERSION = 11
 
 function isoNow() { return new Date().toISOString() }
 function isoH(n)  { return addHours(n).toISOString() }
@@ -255,6 +255,7 @@ export function runSeed(force = false) {
     },
     {
       id: 'H_ADMIN',
+      isSupport: true, // ช่องแชทฝ่ายบริการลูกค้า ไม่ใช่โรงแรมจริง (ไม่นับในสถิติ/ไม่แสดงในหน้าค้นหา)
       managerId: 'A001',
       name: 'ฝ่ายบริการลูกค้า (Admin Support)',
       location: 'ศูนย์ช่วยเหลือ Adoga Service',
@@ -280,6 +281,8 @@ export function runSeed(force = false) {
     { id:'B006', userId:'U002', hotelId:'H002', roomId:'H002-R1', roomNo:'301', guests:2, checkIn: isoD(-15), checkOut: isoD(-13), nights:2, totalPrice:3740, status:'cancelled', cancelReason:'refunded', paymentMethod:'QR', paymentStatus:'refunded', createdAt: isoD(-17), expiresAt: isoH(-385), checkedInAt:null, checkedOutAt:null },
     { id:'B007', userId:'U002', hotelId:'H010', roomId:'H010-R1', roomNo:'1902', guests:2, checkIn: isoD(10), checkOut: isoD(12), nights:2, totalPrice:6120, status:'confirmed', cancelReason:null, paymentMethod:'BANK_TRANSFER', paymentStatus:'success', createdAt: isoD(-3), expiresAt: isoH(-59), checkedInAt:null, checkedOutAt:null },
     { id:'B008', userId:'U002', hotelId:'H001', roomId:'H001-R2', roomNo:'202', guests:2, checkIn: isoD(15), checkOut: isoD(17), nights:2, totalPrice:5040, status:'pending_payment', cancelReason:null, paymentMethod:'QR', paymentStatus:'failed', createdAt: isoH(-7), expiresAt: isoH(5), checkedInAt:null, checkedOutAt:null },
+    // เช็คอินวันนี้ — ใช้สาธิต Check-in / Check-out ของผู้จัดการ manager@gmail.com (H002)
+    { id:'B009', userId:'U002', hotelId:'H002', roomId:'H002-R3', roomNo:'201', guests:2, checkIn: isoD(0), checkOut: isoD(2), nights:2, totalPrice:3060, status:'confirmed', cancelReason:null, paymentMethod:'BANK_TRANSFER', paymentStatus:'success', createdAt: isoD(-6), expiresAt: isoH(-132), checkedInAt:null, checkedOutAt:null },
   ]
 
   // ── Refunds ───────────────────────────────────────────────
@@ -333,37 +336,59 @@ export function runSeed(force = false) {
   // ── Settings & Filler Bookings ────────────────────────────
   const settings = { enableRefund: true }
 
-  // Filler bookings for charts (~50 items, completed, spread over 12 months)
+  // Completed stays used by reviews + charts.
+  // ราคาคำนวณจากราคาห้องจริง x จำนวนคืน x ส่วนลดของโรงแรม และใช้หมายเลขห้องที่มีอยู่จริง
   const fillers = []
-  const fillerHotels = ['H001','H002','H003','H004','H005','H007','H008','H010']
-  for (let i = 0; i < 50; i++) {
-    const daysBack = Math.floor(Math.random() * 365)
-    fillers.push({
-      id: `B1${String(i).padStart(2,'0')}`,
-      userId: i % 2 === 0 ? 'U001' : 'U002',
-      hotelId: fillerHotels[i % fillerHotels.length],
-      roomId: `${fillerHotels[i % fillerHotels.length]}-R1`,
-      roomNo: '999',
-      guests: 2,
-      checkIn: isoD(-daysBack - 3),
-      checkOut: isoD(-daysBack - 1),
-      nights: 2,
-      totalPrice: [2700, 3740, 4480, 5040, 8624, 6120][i % 6],
-      status: 'completed',
-      cancelReason: null,
-      paymentMethod: 'QR',
-      paymentStatus: 'success',
-      createdAt: isoD(-daysBack - 5),
-      expiresAt: isoD(-daysBack - 4),
-      checkedInAt: isoD(-daysBack - 3),
-      checkedOutAt: isoD(-daysBack - 1),
-    })
+  const stay = (userId, hotelId, endDaysAgo, nights) => {
+    const hotel = hotels.find(h => h.id === hotelId)
+    const room = hotel.rooms[0]
+    const unit = room.units[fillers.length % room.units.length]
+    const createdDaysAgo = endDaysAgo + nights + 3
+    const b = {
+      id: `B${String(100 + fillers.length).padStart(3, '0')}`,
+      userId, hotelId, roomId: room.id, roomNo: unit.no, guests: Math.min(2, room.capacity),
+      checkIn: isoD(-(endDaysAgo + nights)), checkOut: isoD(-endDaysAgo), nights,
+      totalPrice: Math.round(nights * room.price * (1 - (hotel.discount || 0) / 100)),
+      status: 'completed', cancelReason: null,
+      paymentMethod: fillers.length % 3 === 0 ? 'BANK_TRANSFER' : 'QR', paymentStatus: 'success',
+      createdAt: isoD(-createdDaysAgo), expiresAt: new Date(addDays(-createdDaysAgo).getTime() + 12 * 3600000).toISOString(),
+      checkedInAt: isoD(-(endDaysAgo + nights)), checkedOutAt: isoD(-endDaysAgo),
+    }
+    fillers.push(b)
+    return b
   }
+  // 1) รีวิวทุกอันต้องมาจากการเข้าพักที่เสร็จสิ้นจริง (เช็คเอาท์ก่อนวันรีวิว 1 วัน)
+  for (const r of reviews) {
+    const daysAgo = Math.round((Date.now() - new Date(r.date).getTime()) / 86400000)
+    r.bookingId = stay(r.userId, r.hotelId, daysAgo + 1, 2).id
+  }
+  // 2) การเข้าพักย้อนหลัง 12 เดือนสำหรับกราฟ
+  const fillerHotels = ['H001','H002','H003','H004','H005','H007','H008','H010']
+  for (let i = 0; i < 42; i++) {
+    stay(i % 2 === 0 ? 'U001' : 'U002', fillerHotels[i % fillerHotels.length], 7 + Math.floor(Math.random() * 355), 1 + (i % 3))
+  }
+
+  // ── Consistency pass ──────────────────────────────────────
+  // สถานะห้อง (State Diagram ห้องพัก) ต้องตรงกับการจองจริง:
+  // ห้องที่มีการจองค้าง (รอชำระ/ยืนยันแล้ว) = ถูกจอง, ไม่มี = ว่าง, ปิดปรับปรุงคงเดิม
+  const allBookings = [...bookings, ...fillers]
+  const ACTIVE = ['pending_payment', 'confirmed']
+  for (const h of hotels) {
+    for (const r of h.rooms || []) {
+      for (const u of r.units || []) {
+        const busy = allBookings.some(b => ACTIVE.includes(b.status) && b.hotelId === h.id && b.roomId === r.id && String(b.roomNo) === String(u.no))
+        if (busy) u.status = 'booked'
+        else if (u.status !== 'maintenance') u.status = 'available'
+      }
+    }
+  }
+  allBookings.forEach((b, i) => { b.paymentId = `PAY-${String(i + 1).padStart(6, '0')}` })
+  for (const rf of refunds) rf.statusHistory = []
 
   // ── Persist ───────────────────────────────────────────────
   set('adoga_users', users)
   set('adoga_hotels', hotels)
-  set('adoga_bookings', [...bookings, ...fillers])
+  set('adoga_bookings', allBookings)
   set('adoga_refunds', refunds)
   set('adoga_reviews', reviews)
   set('adoga_messages', messages)
@@ -374,7 +399,7 @@ export function runSeed(force = false) {
   if (db) {
     db['adoga_users'] = users
     db['adoga_hotels'] = hotels
-    db['adoga_bookings'] = [...bookings, ...fillers]
+    db['adoga_bookings'] = allBookings
     db['adoga_refunds'] = refunds
     db['adoga_reviews'] = reviews
     db['adoga_messages'] = messages

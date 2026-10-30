@@ -1,6 +1,5 @@
 // src/services/authService.js
 import { db } from '../stores/db.js'
-import { set } from '../utils/storage.js'
 import { validateEmailUnique, validatePassword, validateName } from '../utils/validators.js'
 
 function nextId(role) {
@@ -42,16 +41,9 @@ export function register({ email, password, firstName, lastName, nickname, phone
 export function login(email, password) {
   const users = db['adoga_users'] || []
   const cleanEmail = email.trim().toLowerCase()
-  const user = users.find(u => 
-    u.email === cleanEmail ||
-    (cleanEmail === 'hotel@domain.com' && u.email === 'manager@gmail.com') ||
-    (cleanEmail === 'manager@gmail.com' && u.email === 'hotel@domain.com') ||
-    (cleanEmail === 'hotel2@domain.com' && u.email === 'manager2@gmail.com') ||
-    (cleanEmail === 'manager2@gmail.com' && u.email === 'hotel2@domain.com') ||
-    (cleanEmail === 'admin@adoga.com' && u.email === 'admin@gmail.com') ||
-    (cleanEmail === 'admin@gmail.com' && u.email === 'admin@adoga.com')
-  )
+  const user = users.find(u => u.email === cleanEmail)
   if (!user) return { ok: false, message: 'ไม่พบอีเมลนี้ในระบบ กรุณาลงทะเบียน' }
+  if (!user.password) return { ok: false, message: 'บัญชีนี้สมัครผ่าน Google กรุณาเข้าสู่ระบบด้วยปุ่ม Google' }
   if (user.password !== password) return { ok: false, message: 'รหัสผ่านไม่ถูกต้อง' }
   if (user.disabled || user.status === 'disabled') {
     return { ok: false, message: 'คุณไม่มีสิทธิ์เข้าใช้งานในระบบ' }
@@ -64,31 +56,19 @@ export function login(email, password) {
 export function loginWithGoogleEmail(email) {
   const users = db['adoga_users'] || []
   const cleanEmail = email.trim().toLowerCase()
-  let user = users.find(u => 
-    u.email === cleanEmail ||
-    (cleanEmail === 'hotel@domain.com' && u.email === 'manager@gmail.com') ||
-    (cleanEmail === 'manager@gmail.com' && u.email === 'hotel@domain.com') ||
-    (cleanEmail === 'hotel2@domain.com' && u.email === 'manager2@gmail.com') ||
-    (cleanEmail === 'manager2@gmail.com' && u.email === 'hotel2@domain.com') ||
-    (cleanEmail === 'admin@adoga.com' && u.email === 'admin@gmail.com') ||
-    (cleanEmail === 'admin@gmail.com' && u.email === 'admin@adoga.com')
-  )
+  let user = users.find(u => u.email === cleanEmail)
+  if (user && user.role === 'admin') {
+    return { ok: false, message: 'บัญชีผู้ดูแลระบบต้องเข้าสู่ระบบด้วยอีเมลและรหัสผ่านเท่านั้น' }
+  }
   if (!user) {
+    // บัญชี Google ใหม่สมัครได้เฉพาะบทบาท "ลูกค้า" — สิทธิ์ผู้จัดการ/ผู้ดูแลระบบต้องได้รับจากผู้ดูแลระบบเท่านั้น
     const emailPrefix = cleanEmail.split('@')[0] || 'User'
     const formattedName = emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1)
-    
-    let detectedRole = 'user'
-    if (cleanEmail.includes('admin')) {
-      detectedRole = 'admin'
-    } else if (cleanEmail.includes('manager')) {
-      detectedRole = 'manager'
-    }
-
     user = {
-      id: nextId(detectedRole),
+      id: nextId('user'),
       email: cleanEmail,
       password: '',
-      role: detectedRole,
+      role: 'user',
       firstName: formattedName,
       lastName: '',
       nickname: formattedName,
@@ -115,6 +95,11 @@ export function toggleUserAccess(userId, enabled) {
   users[idx] = { ...users[idx], disabled: !enabled, status: enabled ? 'active' : 'disabled' }
   db['adoga_users'] = users
   return { ok: true, user: users[idx] }
+}
+
+export function isUserActive(userId) {
+  const u = (db['adoga_users'] || []).find(x => x.id === userId)
+  return !!u && !u.disabled && u.status !== 'disabled'
 }
 
 export function logout() {

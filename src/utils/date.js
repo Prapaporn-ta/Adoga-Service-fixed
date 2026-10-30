@@ -32,27 +32,33 @@ export function countdown(expiresAt) {
   }
 }
 
+// อ่านจำนวนเงินเป็นตัวอักษรไทย เช่น 2501 → "สองพันห้าร้อยเอ็ดบาทถ้วน", 12000000 → "สิบสองล้านบาทถ้วน"
 export function thaiBahtText(amount) {
-  if (isNaN(amount) || amount === 0) return 'ศูนย์บาทถ้วน'
-  const numbers = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า']
-  const positions = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน', 'ล้าน']
-  const str = Math.round(amount).toString()
-  const len = str.length
-  let result = ''
-  for (let i = 0; i < len; i++) {
-    const digit = parseInt(str.charAt(i))
-    const pos = len - i - 1
-    if (digit !== 0) {
-      if (pos === 1 && digit === 1) {
-        result += 'สิบ'
-      } else if (pos === 1 && digit === 2) {
-        result += 'ยี่สิบ'
-      } else if (pos === 0 && digit === 1 && len > 1 && parseInt(str.charAt(i - 1)) !== 0) {
-        result += 'เอ็ด'
-      } else {
-        result += numbers[digit] + positions[pos]
-      }
+  const n = Math.round(Number(amount))
+  if (!isFinite(n) || n === 0) return 'ศูนย์บาทถ้วน'
+  const digits = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า']
+  const places = ['', 'สิบ', 'ร้อย', 'พัน', 'หมื่น', 'แสน']
+  // read a number below one million
+  const readGroup = (str, hasHigher = false) => {
+    let out = ''
+    const len = str.length
+    for (let i = 0; i < len; i++) {
+      const d = Number(str[i])
+      const pos = len - i - 1
+      if (d === 0) continue
+      if (pos === 1 && d === 1) out += 'สิบ'
+      else if (pos === 1 && d === 2) out += 'ยี่สิบ'
+      else if (pos === 0 && d === 1 && (hasHigher || (len > 1 && Number(str.slice(0, -1)) > 0))) out += 'เอ็ด'
+      else out += digits[d] + places[pos]
     }
+    return out
   }
-  return result + 'บาทถ้วน'
+  const read = (num) => {
+    const str = String(num)
+    if (str.length <= 6) return readGroup(str)
+    const head = str.slice(0, -6)
+    const tail = str.slice(-6)
+    return read(Number(head)) + 'ล้าน' + (Number(tail) ? readGroup(String(Number(tail)), true) : '')
+  }
+  return (n < 0 ? 'ลบ' : '') + read(Math.abs(n)) + 'บาทถ้วน'
 }

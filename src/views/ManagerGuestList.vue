@@ -3,7 +3,7 @@
 import { computed, ref } from 'vue'
 import { db } from '../stores/db.js'
 import { useSession } from '../stores/session.js'
-import { checkIn, checkOut, revertToCheckIn, revertToWaiting } from '../services/transitions.js'
+import { checkIn, checkOut, revertToWaiting, checkInBlockReason } from '../services/transitions.js'
 import { formatDate } from '../utils/date.js'
 import { showToast } from '../utils/toast.js'
 import StatusBadge from '../components/common/StatusBadge.vue'
@@ -39,7 +39,7 @@ const allMyBookings = computed(() => {
       const isPaidOrConfirmed = b.status === 'confirmed' || b.status === 'completed' || b.paymentStatus === 'success' || !!b.checkedInAt
       return isPaidOrConfirmed
     })
-    .sort((a, b) => new Date(b.createdAt || a.checkIn) - new Date(a.createdAt || b.checkIn))
+    .sort((a, b) => new Date(b.createdAt || b.checkIn) - new Date(a.createdAt || a.checkIn))
 })
 
 // Filters
@@ -95,7 +95,7 @@ function getUserName(userId) {
 function getRoomName(hotel, roomId) {
   if (!hotel?.rooms) return ''
   const room = hotel.rooms.find(r => r.id === roomId)
-  return room ? room.name : ''
+  return room ? (room.type || room.name || '') : ''
 }
 
 const derivedStatus = (b) => {
@@ -175,13 +175,32 @@ const totalCheckedInCount = computed(() => allMyBookings.value.filter(b => deriv
 const totalCompletedCount = computed(() => allMyBookings.value.filter(b => derivedStatus(b) === 'completed').length)
 
 function doCheckIn(bookingId, guestName) {
-  checkIn(bookingId)
-  showToast(`เช็คอิน ${guestName || 'ผู้เข้าพัก'} สำเร็จแล้ว`, 'success')
+  try {
+    checkIn(bookingId)
+    showToast(`เช็คอิน ${guestName || 'ผู้เข้าพัก'} สำเร็จแล้ว`, 'success')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function doCheckOut(bookingId, roomNo) {
-  checkOut(bookingId)
-  showToast(`เช็คเอาท์ห้อง ${roomNo || ''} สำเร็จเรียบร้อย`, 'success')
+  try {
+    checkOut(bookingId)
+    showToast(`เช็คเอาท์ห้อง ${roomNo || ''} สำเร็จเรียบร้อย`, 'success')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
+}
+
+// ตัวเลือกที่ทำได้จริงในสถานะปัจจุบัน (ตาม State Diagram การจอง: เสร็จสิ้นแล้วย้อนกลับไม่ได้)
+function actionDisabled(b, action) {
+  const current = getBookingAction(b)
+  if (action === current) return false
+  if (current === 'check_out') return true
+  if (action === 'check_in') return !!checkInBlockReason(b, db['adoga_refunds'] || [])
+  if (action === 'check_out') return current !== 'check_in'
+  if (action === 'waiting') return current !== 'check_in'
+  return true
 }
 
 function getBookingAction(b) {
@@ -207,24 +226,22 @@ function handleActionSelect(b, event) {
   if (newAction === currentAction) return
 
   const guestName = getUserName(b.userId)
-
-  if (newAction === 'check_in') {
-    if (b.checkedOutAt) {
-      revertToCheckIn(b.id)
-    } else {
+  try {
+    if (newAction === 'check_in') {
       checkIn(b.id)
+      showToast(`เช็คอิน ${guestName} สำเร็จแล้ว`, 'success')
+    } else if (newAction === 'check_out') {
+      checkOut(b.id)
+      showToast(`เช็คเอาท์ห้อง ${b.roomNo || ''} สำเร็จเรียบร้อย`, 'success')
+    } else if (newAction === 'waiting') {
+      revertToWaiting(b.id)
+      showToast(`ยกเลิกการเช็คอินของ ${guestName} แล้ว (กลับเป็น "รอ Check-in")`, 'info')
     }
-    showToast(`เช็คอิน ${guestName} สำเร็จแล้ว`, 'success')
-  } else if (newAction === 'check_out') {
-    if (!b.checkedInAt) {
-      checkIn(b.id)
-    }
-    checkOut(b.id)
-    showToast(`เช็คเอาท์ห้อง ${b.roomNo || ''} สำเร็จเรียบร้อย`, 'success')
-  } else if (newAction === 'waiting') {
-    revertToWaiting(b.id)
-    showToast(`ปรับสถานะของ ${guestName} เป็น "รอ Check-in" เรียบร้อย`, 'info')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
   }
+  // คืนค่าที่แสดงใน select ให้ตรงกับสถานะจริงเสมอ
+  event.target.value = getBookingAction((db['adoga_bookings'] || []).find(x => x.id === b.id) || b)
 }
 </script>
 
@@ -464,6 +481,8 @@ function handleActionSelect(b, event) {
                       <div class="relative inline-flex items-center">
                         <select
                           :value="getBookingAction(b)"
+                          :disabled="getBookingAction(b) === 'check_out'"
+                          :title="getBookingAction(b) === 'waiting' ? (checkInBlockReason(b, db['adoga_refunds'] || []) || 'พร้อมเช็คอิน') : ''"
                           @change="handleActionSelect(b, $event)"
                           :class="[
                             'appearance-none h-8.5 pl-3 pr-8 rounded-xl text-xs font-semibold border transition-all cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-indigo-500/20',
@@ -471,9 +490,9 @@ function handleActionSelect(b, event) {
                           ]"
                           aria-label="เลือกการดำเนินการ"
                         >
-                          <option value="waiting" class="bg-white text-ink font-normal">รอ Check-in</option>
-                          <option value="check_in" class="bg-white text-ink font-normal">Check-in (เข้าพัก)</option>
-                          <option value="check_out" class="bg-white text-ink font-normal">Check-out (เสร็จสิ้น)</option>
+                          <option value="waiting" :disabled="actionDisabled(b, 'waiting')" class="bg-white text-ink font-normal">รอ Check-in</option>
+                          <option value="check_in" :disabled="actionDisabled(b, 'check_in')" class="bg-white text-ink font-normal">Check-in (เข้าพัก)</option>
+                          <option value="check_out" :disabled="actionDisabled(b, 'check_out')" class="bg-white text-ink font-normal">Check-out (เสร็จสิ้น)</option>
                         </select>
                         <ChevronDown class="w-3.5 h-3.5 absolute right-2.5 pointer-events-none text-slate-500" />
                       </div>

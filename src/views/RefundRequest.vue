@@ -4,7 +4,8 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { db } from '../stores/db.js'
 import { useSession } from '../stores/session.js'
-import { requestRefund } from '../services/transitions.js'
+import { requestRefund, refundBlockReason } from '../services/transitions.js'
+import { showToast } from '../utils/toast.js'
 import { formatPrice, formatDate } from '../utils/date.js'
 import Navbar from '../components/common/Navbar.vue'
 import Footer from '../components/common/Footer.vue'
@@ -68,24 +69,27 @@ const reasonsList = [
 const originalAmount = computed(() => booking.value?.totalPrice || 0)
 const finalRefundAmount = computed(() => originalAmount.value)
 
+// ตรวจสิทธิ์และเงื่อนไขก่อนให้ยื่น: ต้องเป็นการจองของผู้ใช้เอง ชำระแล้ว ยังไม่เข้าพัก และยังไม่เคยยื่น
+const blockReason = computed(() => refundBlockReason(booking.value, session.value?.userId, db['adoga_refunds'] || []))
+
 const canSubmit = computed(() => {
-  return selectedReason.value && agreePolicy1.value && agreePolicy2.value && booking.value
+  return !blockReason.value && selectedReason.value && agreePolicy1.value && agreePolicy2.value && booking.value
 })
 
 function submitRefundForm() {
   if (!canSubmit.value) return
 
   const fullReasonText = selectedReason.value + (extraReasonText.value.trim() ? ` (${extraReasonText.value.trim()})` : '')
-  
-  requestRefund({
-    bookingId: booking.value.id,
-    userId: session.value?.userId,
-    hotelId: booking.value.hotelId,
-    amount: finalRefundAmount.value,
-    reason: `[ช่องทาง: ${selectedChannel.value}] ${fullReasonText}`
-  })
-
-  showSuccessModal.value = true
+  try {
+    requestRefund({
+      bookingId: booking.value.id,
+      userId: session.value?.userId,
+      reason: `[ช่องทาง: ${selectedChannel.value === 'bank' ? 'โอนเข้าบัญชีธนาคาร' : 'คืนช่องทางเดิม'}] ${fullReasonText}`
+    })
+    showSuccessModal.value = true
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function handleDone() {
@@ -112,6 +116,12 @@ function handleDone() {
           </router-link>
         </div>
 
+        <!-- Not eligible -->
+        <div v-if="blockReason && !showSuccessModal" class="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-sm font-semibold flex items-center gap-2">
+          <AlertCircle class="w-5 h-5 flex-shrink-0" />
+          <span>ไม่สามารถยื่นขอคืนเงินได้: {{ blockReason }}</span>
+        </div>
+
         <!-- Page Header Banner -->
         <div class="bg-white rounded-3xl border border-slate-200 p-6 sm:p-8 shadow-xs mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div>
@@ -132,7 +142,7 @@ function handleDone() {
 
           <div class="flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-sky-50 border border-sky-200 text-sky-800 text-xs sm:text-sm font-bold flex-shrink-0">
             <ShieldCheck class="w-5 h-5 text-sky-600" />
-            <span>SIAMVOYAGE BUYER PROTECTION คุ้มครองคืนเงินปลอดภัย 100%</span>
+            <span>Adoga Refund Protection · คืนเงินตามนโยบายของที่พัก</span>
           </div>
         </div>
 
@@ -397,7 +407,7 @@ function handleDone() {
                     class="w-5 h-5 mt-0.5 accent-indigo-600 rounded-md cursor-pointer"
                   />
                   <span class="text-xs sm:text-sm font-medium text-slate-700 leading-relaxed group-hover:text-slate-900">
-                    ยินยอมให้ SiamVoyage ประมวลผลข้อมูลส่วนบุคคลและข้อมูลทางการเงินเพื่อวัตถุประสงค์ในการทำรายการคืนเงินตามกฎหมาย PDPA
+                    ยินยอมให้ Adoga ประมวลผลข้อมูลส่วนบุคคลและข้อมูลทางการเงินเพื่อวัตถุประสงค์ในการทำรายการคืนเงินตามกฎหมาย PDPA
                   </span>
                 </label>
               </div>
@@ -432,7 +442,7 @@ function handleDone() {
                   <span class="font-bold text-emerald-400">-฿0 (ฟรี)</span>
                 </div>
                 <div class="flex justify-between text-indigo-300">
-                  <span>หัก ค่าธรรมเนียม SiamVoyage</span>
+                  <span>หัก ค่าธรรมเนียม Adoga</span>
                   <span class="font-bold text-emerald-400">-฿0 (ฟรี)</span>
                 </div>
               </div>
@@ -524,7 +534,7 @@ function handleDone() {
                 <div class="p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-indigo-600">
                   <span class="flex items-center gap-2">
                     <MessageSquare class="w-4 h-4" />
-                    <span>แชทสดกับเจ้าหน้าที่ SiamVoyage</span>
+                    <span>แชทสดกับเจ้าหน้าที่ Adoga</span>
                   </span>
                   <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
                 </div>

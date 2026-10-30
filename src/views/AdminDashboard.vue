@@ -1,4 +1,5 @@
 <script setup>
+import { isSupportHotel } from '../services/transitions.js'
 // src/views/AdminDashboard.vue
 import { computed, ref, onMounted, watch, nextTick } from 'vue'
 import { db } from '../stores/db.js'
@@ -15,7 +16,8 @@ import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Toolti
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const users = computed(() => db['adoga_users'] || [])
-const hotels = computed(() => db['adoga_hotels'] || [])
+// ไม่นับช่องแชทฝ่ายบริการลูกค้า (H_ADMIN) เป็นโรงแรม
+const hotels = computed(() => (db['adoga_hotels'] || []).filter(h => !isSupportHotel(h)))
 const bookings = computed(() => db['adoga_bookings'] || [])
 
 // Financial & Operational Metrics

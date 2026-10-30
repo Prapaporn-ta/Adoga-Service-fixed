@@ -1,4 +1,5 @@
 <script setup>
+import { getAvailableUnits, todayKey } from '../../services/transitions.js'
 // src/components/common/HotelCard.vue
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
@@ -30,10 +31,16 @@ const minPrice = computed(() => {
 })
 const discountedPrice = computed(() => Math.round(minPrice.value * (1 - (props.hotel.discount || 0) / 100)))
 const hasDiscount = computed(() => props.hotel.discount > 0)
+// ห้องว่างคืนนี้ ตรวจตามวันที่จริง (ไม่นับห้องปิดปรับปรุงและห้องที่มีการจองทับคืนนี้)
 const availableRooms = computed(() => {
+  const today = todayKey()
+  const d = new Date()
+  d.setDate(d.getDate() + 1)
+  const tomorrow = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const bookings = db['adoga_bookings'] || []
   let count = 0
   for (const room of props.hotel.rooms || []) {
-    count += room.units?.filter(u => u.status === 'available').length || 0
+    count += getAvailableUnits(props.hotel, room.id, today, tomorrow, bookings).length
   }
   return count
 })
@@ -85,7 +92,7 @@ function goDetail() { router.push(`/hotel/${props.hotel.id}`) }
           <Star class="w-4 h-4 text-amber-500 fill-amber-400" :stroke-width="1.75" />
           <span class="text-sm font-bold text-ink">{{ actualRating.toFixed(1) }}</span>
           <span v-if="reviewCount > 0" class="text-xs text-slate-500">({{ reviewCount }})</span>
-          <span v-if="availableRooms > 0" class="text-xs text-ink-muted ml-1">(เหลือ {{ availableRooms }} ห้อง)</span>
+          <span v-if="availableRooms > 0" class="text-xs text-ink-muted ml-1">(ว่างคืนนี้ {{ availableRooms }} ห้อง)</span>
           <span v-else class="text-xs text-rose-600 ml-1">เต็ม</span>
         </div>
         <div class="text-right">

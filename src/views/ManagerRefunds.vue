@@ -105,8 +105,7 @@ function openDetailModal(refund) {
 }
 
 function doApproveFromModal(id) {
-  doApprove(id)
-  showDetailModal.value = false
+  if (doApprove(id)) showDetailModal.value = false
 }
 
 function openRejectFromModal(id) {
@@ -114,15 +113,26 @@ function openRejectFromModal(id) {
   openReject(id)
 }
 
-// Actions
+// Actions — ทุกการเปลี่ยนสถานะผ่าน services/transitions.js และแจ้ง error เป็นภาษาไทย
 function doStartReview(id) {
-  startReview(id)
-  showToast('เริ่มการตรวจสอบคำขอคืนเงินแล้ว', 'info')
+  try {
+    startReview(id)
+    showToast('เริ่มการตรวจสอบคำขอคืนเงินแล้ว', 'info')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function doApprove(id) {
-  approveRefund(id)
-  showToast('อนุมัติการคืนเงินเรียบร้อยแล้ว', 'success')
+  if (!confirm('ยืนยันอนุมัติคืนเงิน? การจองจะถูกยกเลิกและห้องจะกลับมาว่าง')) return false
+  try {
+    approveRefund(id)
+    showToast('อนุมัติการคืนเงินเรียบร้อยแล้ว', 'success')
+    return true
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+    return false
+  }
 }
 
 // Reject Modal
@@ -138,9 +148,13 @@ function openReject(id) {
 
 function doReject() {
   if (!rejectReason.value.trim()) return
-  rejectRefund(rejectId.value, rejectReason.value.trim())
-  showRejectModal.value = false
-  showToast('ปฏิเสธคำขอคืนเงินแล้ว', 'info')
+  try {
+    rejectRefund(rejectId.value, rejectReason.value.trim())
+    showRejectModal.value = false
+    showToast('ปฏิเสธคำขอคืนเงินแล้ว', 'info')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 </script>
 

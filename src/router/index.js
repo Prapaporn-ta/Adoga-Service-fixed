@@ -1,6 +1,8 @@
 // src/router/index.js
 import { createRouter, createWebHistory } from 'vue-router'
-import { get } from '../utils/storage.js'
+import { db } from '../stores/db.js'
+import { isUserActive, logout } from '../services/authService.js'
+import { showToast } from '../utils/toast.js'
 import { sweepExpired } from '../services/transitions.js'
 
 // Lazy-load views
@@ -49,8 +51,14 @@ const router = createRouter({
 })
 
 router.beforeEach((to, from, next) => {
-  sweepExpired()
-  const session = get('adoga_current_session')
+  try { sweepExpired() } catch (e) { console.error('[sweepExpired]', e) }
+  // บัญชีที่ถูกระงับสิทธิ์หรือถูกลบ ต้องหลุดออกจากระบบทันที แม้จะล็อกอินค้างไว้
+  const current = db['adoga_current_session']
+  if (current && !isUserActive(current.userId)) {
+    logout()
+    showToast('บัญชีของคุณถูกระงับสิทธิ์การใช้งาน กรุณาติดต่อผู้ดูแลระบบ', 'error', 6000)
+  }
+  const session = db['adoga_current_session']
   const role = session?.role || null
   const access = to.meta.access
 
@@ -87,7 +95,9 @@ router.beforeEach((to, from, next) => {
   next()
 })
 
-router.afterEach(() => { sweepExpired() })
+router.afterEach(() => {
+  try { sweepExpired() } catch (e) { console.error('[sweepExpired]', e) }
+})
 
 export default router
 

@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { db } from '../stores/db.js'
 import { useSession } from '../stores/session.js'
 import { getCurrentUser, logout } from '../services/authService.js'
-import { requestRefund, cancelBooking } from '../services/transitions.js'
+import { requestRefund, cancelBooking, refundBlockReason, dayKey } from '../services/transitions.js'
 import { formatPrice, formatDate, thaiBahtText } from '../utils/date.js'
 import Navbar from '../components/common/Navbar.vue'
 import Footer from '../components/common/Footer.vue'
@@ -76,19 +76,22 @@ function openRefundModal(bookingId) {
 function submitRefund() {
   const b = myBookings.value.find(x => x.id === refundBookingId.value)
   if (!b) return
-  requestRefund({
-    bookingId: b.id,
-    userId: session.value.userId,
-    hotelId: b.hotelId,
-    amount: b.totalPrice,
-    reason: refundReason.value
-  })
-  showRefundModal.value = false
+  try {
+    requestRefund({ bookingId: b.id, userId: session.value.userId, reason: refundReason.value })
+    showToast('ยื่นคำขอคืนเงินเรียบร้อยแล้ว', 'success')
+    showRefundModal.value = false
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
+  }
 }
 
 function doCancelBooking(bookingId) {
-  if (confirm('ยืนยันการยกเลิกการจอง?')) {
-    cancelBooking(bookingId, 'user')
+  if (!confirm('ยืนยันการยกเลิกการจอง?')) return
+  try {
+    cancelBooking(bookingId, 'user', session.value?.userId)
+    showToast('ยกเลิกการจองแล้ว', 'info')
+  } catch (err) {
+    showToast(err.message, 'error', 6000)
   }
 }
 
@@ -96,12 +99,9 @@ function refundForBooking(bookingId) {
   return myRefunds.value.find(r => r.bookingId === bookingId)
 }
 
+// เงื่อนไขเดียวกับฝั่งระบบ (services/transitions.js) — รวมสวิตช์เปิด/ปิดระบบคืนเงินของผู้ดูแลระบบ
 function canRefund(b) {
-  const hasRefund = !!refundForBooking(b.id)
-  const isPaid = (b.status === 'confirmed' || b.paymentStatus === 'success')
-  const isNotCheckedInOrOut = !b.checkedInAt && !b.checkedOutAt && b.status !== 'completed' && b.status !== 'cancelled'
-  const isBeforeCheckOut = new Date(b.checkOut) > new Date()
-  return isPaid && isNotCheckedInOrOut && !hasRefund && isBeforeCheckOut
+  return !refundBlockReason(b, session.value?.userId, db['adoga_refunds'] || [])
 }
 
 // Review management state & methods
@@ -139,8 +139,20 @@ function openReviewModal(b) {
   showReviewModal.value = true
 }
 
+function nextReviewId(reviews) {
+  const max = reviews.reduce((m, r) => {
+    const mm = /^R(\d+)$/.exec(r.id || '')
+    return mm ? Math.max(m, parseInt(mm[1], 10)) : m
+  }, 0)
+  return 'R' + String(max + 1).padStart(3, '0')
+}
+
 function submitReview() {
   if (!reviewBooking.value) return
+  if (!canReview(reviewBooking.value)) {
+    showToast('รีวิวได้เฉพาะการเข้าพักที่เสร็จสิ้นแล้วเท่านั้น', 'error')
+    return
+  }
   if (!reviewComment.value.trim()) {
     showToast('กรุณากรอกข้อความรีวิว', 'error')
     return
@@ -150,7 +162,7 @@ function submitReview() {
   const existingIndex = reviews.findIndex(r => r.bookingId === b.id)
 
   const reviewData = {
-    id: existingIndex !== -1 ? reviews[existingIndex].id : `R${Date.now()}`,
+    id: existingIndex !== -1 ? reviews[existingIndex].id : nextReviewId(reviews),
     bookingId: b.id,
     hotelId: b.hotelId,
     userId: session.value?.userId || 'U001',
@@ -214,7 +226,8 @@ function getRoomType(hotelId, roomId) {
 
 function getDocNumber(booking, docType) {
   if (!booking) return ''
-  const dateStr = booking.createdAt ? new Date(booking.createdAt).toISOString().slice(0, 10).replace(/-/g, '') : '20261013'
+  const docDate = docType === 'receipt' ? (booking.paidAt || booking.createdAt) : (refundForBooking(booking.id)?.decidedAt || refundForBooking(booking.id)?.createdAt || booking.createdAt)
+  const dateStr = dayKey(docDate || new Date()).replace(/-/g, '')
   if (docType === 'receipt') {
     return `ADM-REC-${dateStr}-${booking.id}`
   } else {

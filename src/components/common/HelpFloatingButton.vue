@@ -27,6 +27,7 @@ function handleHelpClick() {
   if (!hotels.some(h => h.id === 'H_ADMIN')) {
     const adminSupportHotel = {
       id: 'H_ADMIN',
+      isSupport: true, // ช่องแชทฝ่ายบริการลูกค้า ไม่ใช่โรงแรมจริง
       managerId: 'A001',
       name: 'ฝ่ายบริการลูกค้า (Admin Support)',
       location: 'ศูนย์ช่วยเหลือ Adoga Service',
